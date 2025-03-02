@@ -1,5 +1,6 @@
 # floratech_hub
 
+```
 floratech_hub/
 │── floratech_hub/              Directory principale del pacchetto
 │   │── __init__.py             Rende floratech_hub un pacchetto Python
@@ -19,3 +20,4 @@ floratech_hub/
 │── setup.py                    Script di installazione del pacchetto
 │── requirements.txt            Dipendenze del progetto
 │── README.md                   Descrizione del progetto
+```
