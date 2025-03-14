@@ -2,6 +2,7 @@ import spidev
 from gpiozero import OutputDevice, InputDevice
 from time import sleep, time
 from lora.constants import REG, MODE
+import struct
 
 class LoRaModule:
     def __init__(self, cs_pin=25, rst_pin=22, dio0_pin=27, dio1_pin=24, frequency=8000000, debug=False):
@@ -56,7 +57,8 @@ class LoRaModule:
             print("Preamble detected, waiting...")
             sleep(0.01)
         self._write_register(REG.LORA.FIFO_ADDR_PTR, self._read_register(REG.LORA.FIFO_TX_BASE_ADDR))
-        for byte in message.encode():
+        number_bytes = struct.pack('<I', message)
+        for byte in number_bytes:
             self._write_register(REG.LORA.FIFO, byte)
         self._write_register(REG.LORA.PAYLOAD_LENGTH, len(message))
         self._write_register(REG.LORA.OP_MODE, MODE.TX)
@@ -73,9 +75,8 @@ class LoRaModule:
                 return "Timeout: No messages received."
 
     def _on_receive(self):
-        nb_bytes = self._read_register(REG.LORA.RX_NB_BYTES)
-        message = ''.join(chr(self._read_register(REG.LORA.FIFO)) for _ in range(nb_bytes))
-        self._write_register(REG.LORA.OP_MODE, MODE.STDBY)
+        nb_bytes = self.read_register(REG.LORA.RX_NB_BYTES)
+        message = [self.read_register(REG.LORA.FIFO) for _ in range(nb_bytes)]
         self._write_register(REG.LORA.OP_MODE, MODE.RXCONT)
         self._write_register(REG.LORA.FIFO_ADDR_PTR, self._read_register(REG.LORA.FIFO_RX_BASE_ADDR))
         self._write_register(REG.LORA.IRQ_FLAGS, 0xFF)
