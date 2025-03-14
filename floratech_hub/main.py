@@ -46,6 +46,7 @@ async def main():
                 id_max = db.get_max_sensor_id()
                 lora.send(id_max+1)
                 db.save_sensor(id_max+1, "sensor", datetime.now(), 0)
+                print("sensor added")
             
             else:
                 _, role, last_ping, garden = db.get_sensor(sensor_id)
