@@ -14,6 +14,8 @@ class LoRaModule:
         self.spi = spidev.SpiDev()
         self.spi.open(0, 0)
         self.spi.max_speed_hz = frequency
+
+        self.begin(frequency=frequency)
     
     def _write_register(self, address, data):
         self.cs_pin.off()
@@ -50,17 +52,32 @@ class LoRaModule:
         
         self._write_register(REG.LORA.MODEM_CONFIG_1, bandwidth | coding_rate)
         self._write_register(REG.LORA.MODEM_CONFIG_2, spreading_factor | 0x04 * rx_crc)
+        print("LoRa module initialised!")
         sleep(1)
-    
+
     def send(self, message):
         while self._activity_detection(0.01):
             print("Preamble detected, waiting...")
             sleep(0.01)
         self._write_register(REG.LORA.FIFO_ADDR_PTR, self._read_register(REG.LORA.FIFO_TX_BASE_ADDR))
-        number_bytes = struct.pack('<I', message)
-        for byte in number_bytes:
+        for byte in message.encode():
             self._write_register(REG.LORA.FIFO, byte)
         self._write_register(REG.LORA.PAYLOAD_LENGTH, len(message))
+        self._write_register(REG.LORA.OP_MODE, MODE.TX)
+        print(f"{message} sent.")
+ 
+    def send_id(self, message):
+        print(self._read_register(REG.LORA.OP_MODE))    # Debug
+        while self._activity_detection(0.01):
+            print("Preamble detected, waiting...")
+            sleep(0.01)
+        self._write_register(REG.LORA.FIFO_ADDR_PTR, self._read_register(REG.LORA.FIFO_TX_BASE_ADDR))
+        number_bytes = struct.pack('<I', message)
+        number_bytes = b'\x10\x20\x30\x40'
+        for byte in number_bytes:
+            print(byte)
+            self._write_register(REG.LORA.FIFO, byte)
+        self._write_register(REG.LORA.PAYLOAD_LENGTH, 4)
         self._write_register(REG.LORA.OP_MODE, MODE.TX)
         print(f"Message sent: {message}")
     
@@ -75,8 +92,8 @@ class LoRaModule:
                 return "Timeout: No messages received."
 
     def _on_receive(self):
-        nb_bytes = self.read_register(REG.LORA.RX_NB_BYTES)
-        message = [self.read_register(REG.LORA.FIFO) for _ in range(nb_bytes)]
+        nb_bytes = self._read_register(REG.LORA.RX_NB_BYTES)
+        message = [self._read_register(REG.LORA.FIFO) for _ in range(nb_bytes)]
         self._write_register(REG.LORA.OP_MODE, MODE.RXCONT)
         self._write_register(REG.LORA.FIFO_ADDR_PTR, self._read_register(REG.LORA.FIFO_RX_BASE_ADDR))
         self._write_register(REG.LORA.IRQ_FLAGS, 0xFF)

@@ -1,8 +1,10 @@
 from tinydb import TinyDB, Query
+import os
 
 class DatabaseManager:
     def __init__(self, db_path="/var/lib/floratech/db.json"):
-        self.db = TinyDB(db_path)
+        expanded_db_path = os.path.expanduser(db_path)
+        self.db = TinyDB(expanded_db_path)
         self.sensor_table = self.db.table("sensors")
         self.moistures_table = self.db.table("moistures")
 
@@ -62,3 +64,7 @@ class DatabaseManager:
         items = self.sensor_table.all()
         ids = [item.get('id') for item in items if 'id' in item]
         return max(ids) if ids else 0
+    
+    def clear_all(self):
+        self.sensor_table.purge()
+        self.moistures_table.purge()

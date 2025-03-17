@@ -1,3 +1,3 @@
 LORA_FREQUENCY = 433  # MHz
-LORA_BANDWIDTH = 500000  # Hz
+DB_PATH = "~/tinydb_ws/db.json"
 SERVER_URL = "https://example.com/api"
