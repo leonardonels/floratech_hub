@@ -15,7 +15,7 @@ def read_message(message):
 
 class AsyncLoRaModule:
     def __init__(self):
-        self.lora = LoRaModule(frequency=config.LORA_FREQUENCY)
+        self.lora = LoRaModule()
 
     async def async_receive(self, timeout=5):
         loop = asyncio.get_event_loop()
@@ -33,12 +33,6 @@ class AsyncLoRaModule:
         
     def send(self, message):
         self.lora.send_id(message)
-        try:
-            if message is None:
-                raise asyncio.TimeoutError("No message received within the specified timeout")
-        except Exception as e:
-            print(f"Error encurred while answering: {e}")
-            return None
 
 async def timed_callback(server, db):
     while True:
@@ -58,14 +52,15 @@ async def main():
     while True:
         try:
             message = await lora.async_receive()
-            message = [0,0,0,0,0,0,0,0] #debug
 
             if message and len(message) == 8:  # Ensure the message length is exactly 8 characters
                 sensor_id, moisture = read_message(message)
-                print(sensor_id, moisture)
                 if sensor_id == 0:  # if asking for sensor id == 0 -> sensor, else id = FFFF -> actuator
+                    ack = sensor_id
                     id_max = db.get_max_sensor_id()
-                    lora.send(id_max+1)
+                    while(ack != id_max):
+                        lora.send(id_max+1)
+                        ack, _ = read_message(lora.receive())
                     db.save_sensor(id_max+1, "sensor", str(datetime.now()), 0)
 
                 else:
