@@ -37,17 +37,20 @@ class AsyncLoRaModule:
 async def timed_callback(server, db):
     while True:
         await asyncio.sleep(3600)  # 1 hour delay
-        #messages = db.get_messages_to_send()  # Assume this method fetches messages to send
-        #for message in messages:
-        #    server.send_data({"message": message})
+        # push unused sensors or actuators from db
+        # get sensor and actuators configuration
+        # save newly configured sensors or actuators
+        # 
+        # push moistures
+        # get actuators policy
 
 async def main():
     lora = AsyncLoRaModule()
     db = DatabaseManager(db_path=config.DB_PATH)
-    #server = ServerAPI(config.SERVER_URL)
+    server = config.SERVER_URL
 
     # Start the timed callback task for periodic updates
-    #update_task = asyncio.create_task(timed_callback(server, db))
+    update_task = asyncio.create_task(timed_callback(server, db))
 
     while True:
         try:
@@ -57,11 +60,11 @@ async def main():
                 sensor_id, moisture = read_message(message)
                 if sensor_id == 0:  # if asking for sensor id == 0 -> sensor, else id = FFFF -> actuator
                     ack = sensor_id
-                    id_max = db.get_max_sensor_id()
+                    id_max = db.get_max_sensor_id() +1
                     while(ack != id_max):
-                        lora.send(id_max+1)
+                        lora.send(id_max)
                         ack, _ = read_message(lora.receive())
-                    db.save_sensor(id_max+1, "sensor", str(datetime.now()), 0)
+                    db.save_sensor(id_max, "sensor", str(datetime.now()), 0)
 
                 else:
                     _, role, last_ping, garden = db.get_sensor(sensor_id)
@@ -73,8 +76,7 @@ async def main():
                             # update the sensor configuration on the db
                             db.update_sensor(sensor_id, role, str(datetime.now()), garden)
                             #check on last ping
-                            #if (datetime.now() - last_ping).seconds > 3600:
-                                # send a message to the sensor to check on it
+                            #if (datetime.now() - last_ping).seconds > 86400:   # 24h => 3600*24
                                 #pass 
 
                         elif role == "actuator":
