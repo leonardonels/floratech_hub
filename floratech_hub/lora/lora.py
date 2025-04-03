@@ -115,7 +115,6 @@ class LoRaModule():
         self._write_register(REG.LORA.FIFO_ADDR_PTR, self._read_register(REG.LORA.FIFO_TX_BASE_ADDR))
         number_bytes = struct.pack('<I', message)
         for byte in number_bytes:
-            print(byte)
             self._write_register(REG.LORA.FIFO, byte)
         self._write_register(REG.LORA.PAYLOAD_LENGTH, 4)
         self._write_register(REG.LORA.OP_MODE, MODE.TX)
@@ -133,11 +132,32 @@ class LoRaModule():
                 self._write_register(REG.LORA.OP_MODE, MODE.STDBY)
                 return "Timeout: No messages received within the specified time."
 
+    def receive_bytes(self, timeout=5):
+        self.set_module_on_receive()
+        start_time = time()
+        while True:
+            if self._dio0_pin.is_active:
+                message = self.on_receive_bytes()
+                start_time = time()
+                return message
+            elif (time() - start_time > timeout) & timeout!=0:
+                self._write_register(REG.LORA.OP_MODE, MODE.STDBY)
+                return "Timeout: No messages received within the specified time."
+
     def set_module_on_receive(self):
         if self._read_register(REG.LORA.DIO_MAPPING_1) != 0x00:
             self._write_register(REG.LORA.DIO_MAPPING_1, 0x00)
         self._write_register(REG.LORA.OP_MODE, MODE.RXCONT)
         self._write_register(REG.LORA.FIFO_ADDR_PTR, self._read_register(REG.LORA.FIFO_RX_BASE_ADDR))
+
+    def on_receive_bytes(self):
+        nb_bytes = self._read_register(REG.LORA.RX_NB_BYTES)
+        message = [self._read_register(REG.LORA.FIFO) for _ in range(nb_bytes)]
+        self._write_register(REG.LORA.OP_MODE, MODE.STDBY)
+        self._write_register(REG.LORA.OP_MODE, MODE.RXCONT)
+        self._write_register(REG.LORA.FIFO_ADDR_PTR, self._read_register(REG.LORA.FIFO_RX_BASE_ADDR))
+        self._write_register(REG.LORA.IRQ_FLAGS, 0xFF)
+        return message
 
     def on_receive(self):
         nb_bytes = self._read_register(REG.LORA.RX_NB_BYTES)
