@@ -34,21 +34,6 @@ class AsyncLoRaModule:
     def send(self, message):
         self.lora.send_id(message)
 
-
-
-
-# call warning
-# mandare elenco all sensor con tutto
-# check con mappa completa
-#
-# push unused sensors or actuators from db
-# get sensor and actuators configuration
-# save newly configured sensors or actuators
-# 
-# push moistures
-# get actuators policy
-
-
 async def h_callback(server, db):
     while True:
         await asyncio.sleep(3600)   # 1 hour delay
@@ -64,9 +49,7 @@ async def day_callback(server, db):
         await asyncio.sleep(86400)  # 1 day delay
         sensors_json = db.get_sensors()
         '''push actual sensor/actuators configuration asking its correctness'''
-
-
-
+        '''meaning also to compute the event in which the owner deleted some sensor'''
 
 async def main():
     lora = AsyncLoRaModule()
