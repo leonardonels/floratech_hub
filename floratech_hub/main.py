@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+import requests
 
 import config
 from lora.lora import LoRaModule
@@ -34,22 +35,34 @@ class AsyncLoRaModule:
     def send(self, message):
         self.lora.send_id(message)
 
+async def warning_callback(server, db, id):
+    while True:
+        await asyncio.sleep(30)
+        time = datetime.now()
+        sensor = db.get_sensor(id)
+        _, _, last_ping, _ = sensor.get("id"), sensor.get("role"), sensor.get("last_ping"), sensor.get("garden")
+        if (datetime.now() - last_ping).seconds < 86400:
+            requests.get(config.SERVER_URL + "sensor_warking/" + config.RASBERRY_ID + "/" + id)
+
 async def h_callback(server, db):
     while True:
         await asyncio.sleep(3600)   # 1 hour delay
         sensors_json = db.get_sensors()
         time = datetime.now()
         for sensor in sensors_json:
-            _, _, last_ping, _ = sensor.get("id"), sensor.get("role"), sensor.get("last_ping"), sensor.get("garden")
+            id, _, last_ping, _ = sensor.get("id"), sensor.get("role"), sensor.get("last_ping"), sensor.get("garden")
             if (datetime.now() - last_ping).seconds > 86400:
-                '''send waring to django'''
+                requests.get(config.SERVER_URL + "sensor_warning/" + config.RASBERRY_ID + "/" + id + "/last_ping_too_old")
+                warking_update_task = asyncio.create_task(warning_callback(server, db, id))            
 
 async def day_callback(server, db):
     while True:
         await asyncio.sleep(86400)  # 1 day delay
         sensors_json = db.get_sensors()
-        '''push actual sensor/actuators configuration asking its correctness'''
-        '''meaning also to compute the event in which the owner deleted some sensor'''
+        sensor_response = requests.get(config.SERVER_URL + "sensors_conf", json = sensors_json)
+        if sensors_json != sensor_response:
+            '''fai cose'''
+            pass
 
 async def main():
     lora = AsyncLoRaModule()
@@ -100,7 +113,7 @@ async def main():
                             db.save_sensor(id_max, "actuator", str(datetime.now()), 0)
 
                         sensor_json = db.get_sensor(id_max)
-                        '''send new json to django to add the sensor'''
+                        ack_response = requests.get(config.SERVER_URL + "sensors_conf", json = sensors_json)
 
                         if debug:
                             print('saved!')
