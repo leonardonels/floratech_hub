@@ -59,7 +59,7 @@ async def day_callback(server, db):
     while True:
         await asyncio.sleep(86400)  # 1 day delay
         sensors_json = db.get_sensors()
-        sensor_response = requests.get(config.SERVER_URL + "sensors_conf", json = sensors_json)
+        sensor_response = requests.post(config.SERVER_URL + "check_sensor", json = sensors_json)
         if sensors_json != sensor_response:
             '''fai cose'''
             pass
@@ -113,7 +113,7 @@ async def main():
                             db.save_sensor(id_max, "actuator", str(datetime.now()), 0)
 
                         sensor_json = db.get_sensor(id_max)
-                        ack_response = requests.get(config.SERVER_URL + "sensors_conf", json = sensors_json)
+                        requests.post(config.SERVER_URL + "new_sensor/" + config.RASBERRY_ID, json = sensor_json[0])
 
                         if debug:
                             print('saved!')
@@ -128,7 +128,12 @@ async def main():
                     
                     _, role, last_ping, garden = result[0].values()
                     if garden == 0:
-                        '''ask django if sensor number sensor_id has been assigend to a garden'''
+
+                        response = requests.post(config.SERVER_URL + "add_garden/" + config.RASBERRY_ID, json = result[0])
+                        _, _, garden = response.get("id"), response.get("role"), response.get("garden")
+                        if garden != 0:
+                            '''fai cose'''
+                            pass
 
                     if role != None and last_ping != None and garden != None and garden != 0:
                     
