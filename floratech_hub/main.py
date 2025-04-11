@@ -6,14 +6,16 @@ import config
 from lora.lora import LoRaModule
 from database.database import DatabaseManager
 
-
 def read_message(message):
     combined_hex = int.from_bytes(message, byteorder='big')
+    for byte in message:
+        print(f"Byte: {byte}")
 
     id = combined_hex >> 32
     moisture = combined_hex & 0xFFFFFFFF
 
     return id, moisture
+
 
 def new_sensor(debug, db, lora, role = "sensor"):
     ack = 0
@@ -25,13 +27,16 @@ def new_sensor(debug, db, lora, role = "sensor"):
         
         '''it's possible to brick the sensor if the ack is sent, but not received'''
         if len(message) == 8:
-            ack, _ = read_message(message)
+            ack, ver = read_message(message)
+            if ack != ver:
+                print(f"Error: ack {ack} does not match sent id {ver}")
+                return
             if debug:
-                print(f'message: {ack} {_}')
+                print(f'Ack message: {ack} {ver}')
         
         else:
             print('Timeout: No ack received within the specified time.')
-            break
+            return
 
     if ack == id_max:   # need to check if the ack was successfully received
         db.save_sensor(id_max, role, str(datetime.now()), None)
@@ -79,35 +84,59 @@ class AsyncLoRaModule:
     def send(self, message):
         self.lora.send_id(message)
 
-async def warning_callback(server, db, id):
+async def sensor_warning_callback(db, id):
     while True:
-        await asyncio.sleep(30)
-        time = datetime.now()
-        sensor = db.get_sensor(id)
-        _, _, last_ping, _ = sensor.get("id"), sensor.get("role"), sensor.get("last_ping"), sensor.get("garden")
+        await asyncio.sleep(60)
+        print("Starting sensor_warning_callback...")
+        sensor = db.get_sensor(id)[0]
+        if not sensor:
+            return
+        last_ping = datetime.strptime(sensor.get("last_ping"), "%Y-%m-%d %H:%M:%S.%f")
         if (datetime.now() - last_ping).seconds < 86400:
-            requests.get(config.SERVER_URL + "sensor_warking/" + config.RASBERRY_ID + "/" + id)
+            print(f"Sensor {sensor.get('id')} started working, last ping: {last_ping}")
+        requests.get(config.SERVER_URL + "sensor_working/" + config.RASBERRY_ID + "/" + str(id))
 
-async def h_callback(server, db):
+async def h_callback(db):
     while True:
-        await asyncio.sleep(3600)   # 1 hour delay
+        await asyncio.sleep(3600)
+        print("Starting h_callback...")
         sensors_json = db.get_sensors()
-        time = datetime.now()
         for sensor in sensors_json:
-            id, _, last_ping, _ = sensor.get("id"), sensor.get("role"), sensor.get("last_ping"), sensor.get("garden")
-            if (datetime.now() - last_ping).seconds > 86400:
-                requests.get(config.SERVER_URL + "sensor_warning/" + config.RASBERRY_ID + "/" + id + "/last_ping_too_old")
-                warking_update_task = asyncio.create_task(warning_callback(server, db, id))            
+            try:
+                last_ping = datetime.strptime(sensor.get("last_ping"), "%Y-%m-%d %H:%M:%S.%f")
+                if (datetime.now() - last_ping).seconds > 86400 and sensor.get("garden") != None:
+                    print(f"Sensor {sensor.get('id')} stopped working, last ping: {last_ping}")
+                    response = requests.get(config.SERVER_URL + "sensor_warning/" + config.RASBERRY_ID + "/" + str(sensor.get("id")) + "/sensor_timedout")
+                    if response.status_code == 200:
+                        sensor_warning_task = asyncio.create_task(sensor_warning_callback(db, sensor.get("id")))
+            except Exception as e:
+                print(f"Error processing sensor {sensor.get('id')}: {e}")
+                pass
 
-async def day_callback(server, db):
+async def day_callback(db):
     while True:
         await asyncio.sleep(86400)  # 1 day delay
+        print("Starting day_callback...")
         sensors_json = db.get_sensors()
-        sensor_response = requests.post(config.SERVER_URL + "check_sensor", json = sensors_json)
-        if sensors_json != sensor_response:
-            '''fai cose'''
-            pass
+        for sensor in sensors_json:
+            last_ping = list(sensor.keys())[2]
+            del sensor[last_ping]
 
+        response = requests.post(config.SERVER_URL + "check_sensor/" + config.RASBERRY_ID, json = sensors_json)
+        if response.status_code == 200:
+            print("Server response received.")
+
+            print(f"Local sensors: {sensors_json}")
+            print(f"Server sensors: {response.json()}")
+            if sensors_json != response.json():
+                print("Sensors do not match!")
+                for sensor in response.json():
+                    db.update_sensor(sensor.get("id"), sensor.get("role"), str(datetime.now()), sensor.get("garden"))
+            else:   
+                print("Sensors match!")
+
+        else:
+            print(f"Error: {response.status_code}")
 
 async def main():
     lora = AsyncLoRaModule()
@@ -116,8 +145,13 @@ async def main():
     debug = config.DEBUG
 
     # Start the timed callback task for periodic updates
-    h_update_task = asyncio.create_task(h_callback(server, db))
-    day_update_task = asyncio.create_task(day_callback(server, db))
+    h_update_task = asyncio.create_task(h_callback(db))
+    day_update_task = asyncio.create_task(day_callback(db))
+
+    #if debug: db.save_sensor(10, "sensor", str(datetime.now()), None)
+    #if debug: requests.post(config.SERVER_URL + "new_sensor/" + config.RASBERRY_ID, json = {"id": 10, "role": "sensor", "last_ping": str(datetime.now()), "garden": None})
+    #if debug: db.save_sensor(11, "sensor", str(datetime.now()), None)
+    #if debug: requests.post(config.SERVER_URL + "new_sensor/" + config.RASBERRY_ID, json = {"id": 11, "role": "sensor", "last_ping": str(datetime.now()), "garden": None})
 
     while True:
         try:
@@ -127,7 +161,7 @@ async def main():
                 sensor_id, moisture = read_message(message)
                 if debug: print(f'message: {sensor_id} {moisture}')
                 
-                if sensor_id == 0 or sensor_id == 65535:  # if asking for sensor id == 0 -> sensor, else id = FFFF -> actuator
+                if sensor_id == 0 or sensor_id == 4294967295:  # if asking for sensor id == 0 -> sensor, else id = FFFF -> actuator
                     if debug: print('setup sensor!')
                     
                     new_sensor(debug, db, lora, "sensor" if sensor_id == 0 else "actuator")
@@ -144,7 +178,7 @@ async def main():
                     
                     if garden != None:
                         db.update_sensor(sensor_id, role, str(datetime.now()), garden)
-                        if debug: print(f'garden {garden} successfully updated!')
+                        if debug: print(f'sensor {sensor_id} successfully updated!')
 
                         if role == "sensor":
                             add_moisture(debug, db, sensor_id, moisture, garden)
@@ -156,4 +190,7 @@ async def main():
             print(f"Timeout occurred: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nProgram interrupted by user.")
