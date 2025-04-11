@@ -77,11 +77,6 @@ async def main():
     while True:
         try:
             message = await lora.async_receive()
-            if debug:
-                if len(message)!=8:
-                    print(message)
-                else:
-                    print('message received!')
 
             if message and len(message) == 8:  # Ensure the message length is exactly 8 characters
                 sensor_id, moisture = read_message(message)
@@ -108,42 +103,52 @@ async def main():
                     
                     if ack == id_max:   # need to check if the ack was successfully received
                         if sensor_id == 0:
-                            db.save_sensor(id_max, "sensor", str(datetime.now()), 0)
+                            db.save_sensor(id_max, "sensor", str(datetime.now()), None)
                         else:
-                            db.save_sensor(id_max, "actuator", str(datetime.now()), 0)
+                            db.save_sensor(id_max, "actuator", str(datetime.now()), None)
 
                         sensor_json = db.get_sensor(id_max)
                         requests.post(config.SERVER_URL + "new_sensor/" + config.RASBERRY_ID, json = sensor_json[0])
-
                         if debug:
                             print('saved!')
 
                 else:   # sensor/actuator already configured
                     result = db.get_sensor(sensor_id)
                     if result:
-                        sensor_data = result[0]
-                        _, role, last_ping, garden = sensor_data.get("id"), sensor_data.get("role"), sensor_data.get("last_ping"), sensor_data.get("garden")
+                        _, role, last_ping, garden = result[0].values()
                     else:
                         role, last_ping, garden = None, None, None  # Default values
                     
-                    _, role, last_ping, garden = result[0].values()
-                    if garden == 0:
+                    if garden == None:
 
                         response = requests.post(config.SERVER_URL + "add_garden/" + config.RASBERRY_ID, json = result[0])
-                        _, _, garden = response.get("id"), response.get("role"), response.get("garden")
-                        if garden != 0:
-                            '''fai cose'''
-                            pass
-
-                    if role != None and last_ping != None and garden != None and garden != 0:
-                    
-                        if role == "sensor":
-                            db.save_moisture(str(datetime.now()), moisture, sensor_id, garden)
+                        if response.status_code == 200:
+                            garden = response.json().get("garden")
                             db.update_sensor(sensor_id, role, str(datetime.now()), garden)
+                            if debug:
+                                print('garden!')
+                        else:
+                            print(f"Error: {response.status_code}")
 
-                        elif role == "actuator":
-                            # answer
-                            pass
+                    if role != None and last_ping != None:
+
+                        # update last ping
+                        db.update_sensor(sensor_id, role, str(datetime.now()), garden)
+                        if debug:  
+                            print('update sensor!')
+                    
+                        if garden != None:
+                            if role == "sensor":
+                                db.save_moisture(str(datetime.now()), moisture, sensor_id, garden)
+                                if debug:
+                                    print('moisture!')
+                                requests.post(config.SERVER_URL + "add_moisture/" + config.RASBERRY_ID, json = {'timestamp': str(datetime.now()), 'moisture': moisture, 'sensor_from': sensor_id, 'garden': garden})
+                                if debug:  
+                                print('moisture saved!')
+
+                            elif role == "actuator":
+                                # answer
+                                pass
         
         except asyncio.TimeoutError as e:
             print(f"Timeout occurred: {e}")
