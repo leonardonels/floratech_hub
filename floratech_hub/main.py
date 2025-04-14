@@ -6,16 +6,6 @@ import config
 from lora.lora import LoRaModule
 from database.database import DatabaseManager
 
-def read_message(message):
-    combined_hex = int.from_bytes(message, byteorder='big')
-    for byte in message:
-        print(f"Byte: {byte}")
-
-    id = combined_hex >> 32
-    moisture = combined_hex & 0xFFFFFFFF
-
-    return id, moisture
-
 
 def new_sensor(debug, db, lora, role = "sensor"):
     ack = 0
@@ -40,12 +30,12 @@ def new_sensor(debug, db, lora, role = "sensor"):
 
     if ack == id_max:   # need to check if the ack was successfully received
         db.save_sensor(id_max, role, str(datetime.now()), None)
-        response = requests.post(config.SERVER_URL + "new_sensor/" + config.RASBERRY_ID, json = {"id": id_max, "role": role, "last_ping": str(datetime.now()), "garden": None})
+        response = requests.post(config.SERVER_URL + "new_sensor/" + str(config.RASBERRY_ID), json = {"id": id_max, "role": role, "last_ping": str(datetime.now()), "garden": None})
         if response.status_code == 200:
             print(role + ' saved!')
 
 def add_garden(debug, db, id, role):
-    response = requests.post(config.SERVER_URL + "add_garden/" + config.RASBERRY_ID, json = {"id": id, "role": role, "last_ping": str(datetime.now()), "garden": None})
+    response = requests.post(config.SERVER_URL + "add_garden/" + str(config.RASBERRY_ID), json = {"id": id, "role": role, "last_ping": str(datetime.now()), "garden": None})
     if response.status_code == 200:
         return response.json().get("garden")
 
@@ -58,10 +48,9 @@ def add_moisture(debug, db, sensor_id, moisture, garden):
     db.save_moisture(str(datetime.now()), moisture, sensor_id, garden)
     if debug: print('moisture saved!')
     
-    response = requests.post(config.SERVER_URL + "add_moisture/" + config.RASBERRY_ID, json = {'timestamp': str(datetime.now()), 'moisture': moisture, 'sensor_from': sensor_id, 'garden': garden})
+    response = requests.post(config.SERVER_URL + "add_moisture/" + str(config.RASBERRY_ID), json = {'timestamp': str(datetime.now()), 'moisture': moisture, 'sensor_from': sensor_id, 'garden': garden})
     if response.status_code == 200:
         print('moisture sent!')  
-
 
 class AsyncLoRaModule:
     def __init__(self):
@@ -94,7 +83,7 @@ async def sensor_warning_callback(db, id):
         last_ping = datetime.strptime(sensor.get("last_ping"), "%Y-%m-%d %H:%M:%S.%f")
         if (datetime.now() - last_ping).seconds < 86400:
             print(f"Sensor {sensor.get('id')} started working, last ping: {last_ping}")
-        requests.get(config.SERVER_URL + "sensor_working/" + config.RASBERRY_ID + "/" + str(id))
+        requests.get(config.SERVER_URL + "sensor_working/" + str(config.RASBERRY_ID) + "/" + str(id))
 
 async def h_callback(db):
     while True:
@@ -131,12 +120,26 @@ async def day_callback(db):
             if sensors_json != response.json():
                 print("Sensors do not match!")
                 for sensor in response.json():
-                    db.update_sensor(sensor.get("id"), sensor.get("role"), str(datetime.now()), sensor.get("garden"))
+                    if db.get_sensor(sensor.get("id"))[0]:
+                        db.update_sensor(sensor.get("id"), sensor.get("role"), str(datetime.now()), sensor.get("garden"))
+                '''for sensor in sensors_json:
+                    if sensor not in response.json():
+                        db.delete_sensor(sensor.get("id"))  TO DO'''
             else:   
                 print("Sensors match!")
 
         else:
             print(f"Error: {response.status_code}")
+
+def read_message(message):
+    combined_hex = int.from_bytes(message, byteorder='big')
+    for byte in message:
+        print(f"Byte: {byte}")
+
+    id = combined_hex >> 32
+    moisture = combined_hex & 0xFFFFFFFF
+
+    return id, moisture
 
 async def main():
     lora = AsyncLoRaModule()
@@ -148,10 +151,11 @@ async def main():
     h_update_task = asyncio.create_task(h_callback(db))
     day_update_task = asyncio.create_task(day_callback(db))
 
+    # Debug server management
     #if debug: db.save_sensor(10, "sensor", str(datetime.now()), None)
-    #if debug: requests.post(config.SERVER_URL + "new_sensor/" + config.RASBERRY_ID, json = {"id": 10, "role": "sensor", "last_ping": str(datetime.now()), "garden": None})
+    #if debug: requests.post(config.SERVER_URL + "new_sensor/" + str(config.RASBERRY_ID), json = {"id": 10, "role": "sensor", "last_ping": str(datetime.now()), "garden": None})
     #if debug: db.save_sensor(11, "sensor", str(datetime.now()), None)
-    #if debug: requests.post(config.SERVER_URL + "new_sensor/" + config.RASBERRY_ID, json = {"id": 11, "role": "sensor", "last_ping": str(datetime.now()), "garden": None})
+    #if debug: requests.post(config.SERVER_URL + "new_sensor/" + str(config.RASBERRY_ID), json = {"id": 11, "role": "sensor", "last_ping": str(datetime.now()), "garden": None})
 
     while True:
         try:
@@ -183,7 +187,17 @@ async def main():
                         if role == "sensor":
                             add_moisture(debug, db, sensor_id, moisture, garden)
                         else:
-                            pass
+                            '''h check'''
+                            '''season check'''
+                            '''ask django how much water for m**3 is needed for a certain garden'''
+                            response = requests.get(config.SERVER_URL + "water/" + str(config.RASBERRY_ID) + str(sensor_id)) #{"water": mm, "dim": m**3}
+                            if response.status_code == 200:
+                                '''answer time for pump ON'''
+                                water_mm = response.json().get("water")
+                                garden_area = response.json().get("dim")
+                                lora.send(water_mm*garden_area/config.PUMP_RATE)
+                            else:
+                                print(f"Error: {response.status_code}")
         
 
         except asyncio.TimeoutError as e:
