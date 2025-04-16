@@ -24,23 +24,3 @@ floratech_hub/
 │── requirements.txt            Dipendenze del progetto
 │── README.md                   Descrizione del progetto
 ```
-
-## :gear: How to ssh
-> In order to access the server from your local machine, you need to install Cloudflared on your local machine.
-> You can follow the installation by running the following command:
-```commandline
-curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb &&
-sudo dpkg -i cloudflared.deb &&
-rm cloudflared.deb
-```
-> Next, you need to add remote server to your SSH config. You can do this by adding the following configuration to your ~/.ssh/config:
-```commandline
-Host django
-  Hostname ssh-django.leonardonels.com
-  User django
-  ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h
-```
-> Now you can access the server by running the following command:
-```commandline
-ssh django
-```
