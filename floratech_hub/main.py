@@ -190,7 +190,7 @@ async def main():
                             '''h check'''
                             '''season check'''
                             '''ask django how much water for m**3 is needed for a certain garden'''
-                            response = requests.get(config.SERVER_URL + "water/" + str(config.RASBERRY_ID) + str(sensor_id)) #{"water": mm, "dim": m**3}
+                            response = requests.post(config.SERVER_URL + "water/" + str(config.RASBERRY_ID), json = {"id": sensor_id}) #{"water": mm, "dim": m**3}
                             if response.status_code == 200:
                                 '''answer time for pump ON'''
                                 water_mm = response.json().get("water")
