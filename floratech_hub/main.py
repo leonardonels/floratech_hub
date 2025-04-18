@@ -133,8 +133,6 @@ async def day_callback(db):
 
 def read_message(message):
     combined_hex = int.from_bytes(message, byteorder='big')
-    for byte in message:
-        print(f"Byte: {byte}")
 
     id = combined_hex >> 32
     moisture = combined_hex & 0xFFFFFFFF
@@ -146,6 +144,7 @@ async def main():
     db = DatabaseManager(db_path=config.DB_PATH)
     server = config.SERVER_URL
     debug = config.DEBUG
+    pump_rate = config.PUMP_RATE
 
     # Start the timed callback task for periodic updates
     h_update_task = asyncio.create_task(h_callback(db))
@@ -156,10 +155,14 @@ async def main():
     #if debug: requests.post(config.SERVER_URL + "new_sensor/" + str(config.RASBERRY_ID), json = {"id": 10, "role": "sensor", "last_ping": str(datetime.now()), "garden": None})
     #if debug: db.save_sensor(11, "sensor", str(datetime.now()), None)
     #if debug: requests.post(config.SERVER_URL + "new_sensor/" + str(config.RASBERRY_ID), json = {"id": 11, "role": "sensor", "last_ping": str(datetime.now()), "garden": None})
-
+    #if debug: requests.post(config.SERVER_URL + "new_sensor/" + str(config.RASBERRY_ID), json = {"id": 15, "role": "actuator", "last_ping": str(datetime.now()), "garden": None})
+    
     while True:
         try:
             message = await lora.async_receive()
+            
+            # Uncomment the following line to simulate a message from an actuator for testing purposes
+            #message = [0,0,0,15,0,0,3,255]
 
             if message and len(message) == 8:  # Ensure the message length is exactly 8 characters
                 sensor_id, moisture = read_message(message)
@@ -187,15 +190,19 @@ async def main():
                         if role == "sensor":
                             add_moisture(debug, db, sensor_id, moisture, garden)
                         else:
+                            response = requests.post(server + "get_temperature/", json = {"garden_id": garden})
+                            if response.status_code == 200:
+                                print(response.json().get("temperature"))
+                            else:
+                                print(f"Error: {response.status_code}")
+
                             '''h check'''
                             '''season check'''
-                            '''ask django how much water for m**3 is needed for a certain garden'''
-                            response = requests.post(config.SERVER_URL + "water/" + str(config.RASBERRY_ID), json = {"id": sensor_id}) #{"water": mm, "dim": m**3}
+                            response = requests.post(server + "get_water/", json = {"garden_id": garden})
                             if response.status_code == 200:
-                                '''answer time for pump ON'''
-                                water_mm = response.json().get("water")
-                                garden_area = response.json().get("dim")
-                                lora.send(water_mm*garden_area/config.PUMP_RATE)
+                                print(response.json().get("data"))
+                                pumps = 1
+                                lora.send(response.json().get("data")/(pump_rate*pumps))
                             else:
                                 print(f"Error: {response.status_code}")
         
