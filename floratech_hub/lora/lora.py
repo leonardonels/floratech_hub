@@ -113,7 +113,7 @@ class LoRaModule():
 
     def send_id(self, message):
         self._write_register(REG.LORA.FIFO_ADDR_PTR, self._read_register(REG.LORA.FIFO_TX_BASE_ADDR))
-        number_bytes = struct.pack('<I', message)
+        number_bytes = struct.pack('<i', message)
         for byte in number_bytes:
             self._write_register(REG.LORA.FIFO, byte)
         self._write_register(REG.LORA.PAYLOAD_LENGTH, 4)

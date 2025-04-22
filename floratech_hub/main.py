@@ -1,10 +1,11 @@
-import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
+import asyncio
 
-import config
-from lora.lora import LoRaModule
+from config import OPTIMAL_START_HOUR, OPTIMAL_END_HOUR
 from database.database import DatabaseManager
+from lora.lora import LoRaModule
+import config
 
 
 def new_sensor(debug, db, lora, role = "sensor"):
@@ -52,6 +53,75 @@ def add_moisture(debug, db, sensor_id, moisture, garden):
     if response.status_code == 200:
         print('moisture sent!')  
 
+def try_later(debug, lora, message = -30):
+    if debug: print("Retrying later...")
+    lora.send(message)
+
+# Not great, but works, for now
+def get_season():
+    """Returns 'spring', 'summer', 'autumn', or 'winter' based on the date."""
+    month = datetime.now().month
+    day = datetime.now().day
+
+    if (month == 12 and day >= 21) or (1 <= month <= 2) or (month == 3 and day < 20):
+        return 'winter'
+    elif (month == 3 and day >= 20) or (4 <= month <= 5) or (month == 6 and day < 21):
+        return 'spring'
+    elif (month == 6 and day >= 21) or (7 <= month <= 8) or (month == 9 and day < 22):
+        return 'summer'
+    else:
+        return 'autumn'
+
+def is_optimal_time(now, season):
+    """Checks if the current hour is within the optimal window."""
+    return OPTIMAL_START_HOUR <= now.hour < OPTIMAL_END_HOUR
+
+def calculate_sleep_until_optimal(now):
+    """Returns NEGATIVE seconds to sleep until the next optimal window."""
+    next_start = now.replace(hour=OPTIMAL_START_HOUR, minute=0, second=0, microsecond=0)
+    if now.hour >= OPTIMAL_END_HOUR:
+        next_start = next_start.replace(day=now.day + 1)
+    elif now.hour < OPTIMAL_START_HOUR:
+        pass
+    return -int((next_start - now).total_seconds())  # make it negative
+
+def is_temperature_ok(temperature):
+    if temperature < 5 or temperature > 35:
+        return False
+    return True
+
+def adjust_pump_time_by_temperature(pump_time, temperature):
+    if 10 <= temperature <= 25:
+        return pump_time
+    elif 25 < temperature <= 30:
+        return pump_time * 1.2
+    elif 30 < temperature <= 35:
+        return pump_time * 1.5
+    elif 5 <= temperature < 10:
+        return pump_time * 0.8
+    return pump_time
+
+def is_temperature_ok(temperature):
+    # You can tune this depending on plant type
+    if temperature < 5:
+        return False  # Too cold
+    if temperature > 35:
+        return False  # Too hot
+    return True
+
+def adjust_pump_time_by_temperature(pump_time, temperature):
+    # Adjust watering time based on evaporation rate or plant need
+    if 10 <= temperature <= 25:
+        return pump_time  # Ideal
+    elif 25 < temperature <= 30:
+        return pump_time * 1.2  # Slightly more to compensate evaporation
+    elif 30 < temperature <= 35:
+        return pump_time * 1.5  # Much more, but risky
+    elif 5 <= temperature < 10:
+        return pump_time * 0.8  # Less, because plants absorb less
+    return pump_time
+
+
 class AsyncLoRaModule:
     def __init__(self):
         self.lora = LoRaModule()
@@ -71,6 +141,7 @@ class AsyncLoRaModule:
             return None
         
     def send(self, message):
+        print(f"Sending message: {message}")
         self.lora.send_id(message)
 
 async def sensor_warning_callback(db, id):
@@ -162,7 +233,7 @@ async def main():
             message = await lora.async_receive()
             
             # Uncomment the following line to simulate a message from an actuator for testing purposes
-            #message = [0,0,0,15,0,0,3,255]
+            message = [0,0,0,15,0,0,3,255]
 
             if message and len(message) == 8:  # Ensure the message length is exactly 8 characters
                 sensor_id, moisture = read_message(message)
@@ -189,23 +260,74 @@ async def main():
 
                         if role == "sensor":
                             add_moisture(debug, db, sensor_id, moisture, garden)
-                        else:
-                            response = requests.post(server + "get_temperature/", json = {"garden_id": garden})
-                            if response.status_code == 200:
-                                print(response.json().get("temperature"))
-                            else:
-                                print(f"Error: {response.status_code}")
+                        
+                        # Todo: create a method for actuators to streamline the code
+                        else:   # Actuator
+                            actuators = []
+                            for sensor in db.get_sensors():
+                                if sensor.get("garden") == garden and sensor.get("role") == "actuator":
+                                    actuators.append(sensor.get("id"))
 
-                            '''h check'''
-                            '''season check'''
-                            response = requests.post(server + "get_water/", json = {"garden_id": garden})
+                            if len(actuators) == 0: # Should never happen, but just in case
+                                if debug: print("No actuators found for this garden.")
+                                try_later(debug, lora, -60 * 24)
+                                continue
+                            
+                            # Get temperature
+                            response = requests.post(server + "get_temperature/", json={"garden_id": garden})
                             if response.status_code == 200:
-                                print(response.json().get("data"))
-                                pumps = 1
-                                lora.send(response.json().get("data")/(pump_rate*pumps))
+                                temperature = response.json().get("temperature")
+                                if debug: print(f"Temperature: {temperature}°C")
                             else:
                                 print(f"Error: {response.status_code}")
-        
+                                try_later(debug, lora)
+                                continue
+                            
+                            # Season and time
+                            season = get_season()
+                            now = datetime.now()
+
+                            # Temperature OK?
+                            if not is_temperature_ok(temperature):
+                                if debug: print(f"Temperature {temperature}°C not suitable for watering. Sleeping until tomorrow.")
+                                lora.send(-60 * 60 * 24)  # negative sleep
+                                continue
+                            
+                            # Time OK?
+                            if not is_optimal_time(now, season):
+                                sleep_time = calculate_sleep_until_optimal(now)
+                                if debug: print(f"Not in optimal time window. Sleeping for {-sleep_time} seconds.")
+                                lora.send(sleep_time)  # already negative
+                                continue
+                            
+                            # Get water amount
+                            response = requests.post(server + "get_water/", json={"garden_id": garden})
+                            if response.status_code == 200:
+                                water_amount = response.json().get("data")
+                                if debug: print(f"Water needed: {water_amount}ml")
+                            else:
+                                print(f"Error: {response.status_code}")
+                                try_later(debug, lora)
+                                continue
+                            
+                            # No water needed?
+                            if water_amount == 0:
+                                if debug: print("No water needed. Sleeping until tomorrow.")
+                                sleep_time = calculate_sleep_until_optimal(now)
+                                lora.send(sleep_time)
+                                continue
+                            
+                            # Compute pump time
+                            pump_time = water_amount / (pump_rate * len(actuators))
+                            pump_time = adjust_pump_time_by_temperature(pump_time, temperature)
+
+                            # Limit pump time to window
+                            max_window = (OPTIMAL_END_HOUR - OPTIMAL_START_HOUR) * 3600
+                            if pump_time > max_window:
+                                if debug: print(f"Pump time {pump_time}s exceeds max window. Reducing to {max_window}s.")
+                                pump_time = max_window
+
+                            lora.send(pump_time)
 
         except asyncio.TimeoutError as e:
             print(f"Timeout occurred: {e}")
